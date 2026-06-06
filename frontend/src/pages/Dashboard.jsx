@@ -13,21 +13,49 @@ export default function Dashboard() {
   const [queueToken, setQueueToken] = useState(null);
   const [file, setFile] = useState(null);
   const [notification, setNotification] = useState('');
+  const [history, setHistory] = useState([]);
+
+  const fetchActiveQueue = async () => {
+    try {
+      const { data } = await axios.get('http://localhost:8000/api/queue/my-active', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setQueueToken(data);
+    } catch (e) {
+      setQueueToken(null);
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const { data } = await axios.get('http://localhost:8000/api/queue/history', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setHistory(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchQueueStatus = async (tokenId) => {
+    try {
+      const { data } = await axios.get(`http://localhost:8000/api/queue/status/${tokenId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setQueueToken(data);
+      if (data.status === 'completed' || data.status === 'cancelled') {
+        fetchHistory();
+      }
+    } catch(err) {
+      console.error(err);
+    }
+  };
 
   useEffect(() => {
     if (!token) return;
 
-    const fetchActiveQueue = async () => {
-      try {
-        const { data } = await axios.get('http://localhost:8000/api/queue/my-active', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        setQueueToken(data);
-      } catch (e) {
-        // No active queue found
-      }
-    };
     fetchActiveQueue();
+    fetchHistory();
 
     const newSocket = io('http://localhost:8000');
     setSocket(newSocket);
@@ -37,26 +65,24 @@ export default function Dashboard() {
     });
 
     newSocket.on('queueUpdate', () => {
-      if (queueToken) fetchQueueStatus(queueToken._id);
+      fetchActiveQueue();
+      fetchHistory();
     });
 
     newSocket.on('notification', (data) => {
       setNotification(data.message);
     });
 
-    return () => newSocket.close();
-  }, [token, user, queueToken?._id]);
+    newSocket.on('sessionCompleted', () => {
+      setQueueToken(null);
+      setSymptoms('');
+      setPrediction(null);
+      fetchHistory();
+      alert('Your session has been completed!');
+    });
 
-  const fetchQueueStatus = async (tokenId) => {
-    try {
-      const { data } = await axios.get(`http://localhost:8000/api/queue/status/${tokenId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setQueueToken(data);
-    } catch(err) {
-      console.error(err);
-    }
-  };
+    return () => newSocket.close();
+  }, [token, user.id]);
 
   const analyzeSymptoms = async () => {
     if (!symptoms.trim()) return alert('Please enter your symptoms first!');
@@ -204,6 +230,48 @@ export default function Dashboard() {
                )}
             </div>
           )}
+
+          {/* History Section */}
+          <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100">
+             <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center">
+                <Clock className="w-5 h-5 text-indigo-500 mr-2" />
+                Your Visit History
+             </h3>
+             {history.length === 0 ? (
+                <p className="text-slate-400 font-medium text-center py-6 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                   You have no previous visits recorded.
+                </p>
+             ) : (
+                <div className="space-y-4">
+                   {history.map((h) => (
+                      <div key={h._id} className="p-4 rounded-2xl bg-slate-50/50 border border-slate-100 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-slate-200 transition-all">
+                         <div>
+                            <div className="flex items-center space-x-2">
+                               <span className="font-bold text-slate-800">{h.department}</span>
+                               <span className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                                  h.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'
+                               }`}>
+                                  {h.status.charAt(0).toUpperCase() + h.status.slice(1)}
+                               </span>
+                            </div>
+                            <p className="text-sm text-slate-500 mt-1 font-medium">Symptoms: {h.issues}</p>
+                         </div>
+                         <div className="text-left sm:text-right">
+                            <span className="text-xs text-slate-400 font-medium">
+                               {new Date(h.completedAt || h.createdAt).toLocaleDateString(undefined, {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit'
+                               })}
+                            </span>
+                         </div>
+                      </div>
+                   ))}
+                </div>
+             )}
+          </div>
         </div>
 
         {/* Right Column: Uploads / Extras */}

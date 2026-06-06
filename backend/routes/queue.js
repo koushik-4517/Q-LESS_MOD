@@ -60,6 +60,43 @@ router.post('/join', auth, async (req, res) => {
   }
 });
 
+// Get my active queue
+router.get('/my-active', auth, async (req, res) => {
+  try {
+    const token = await QueueToken.findOne({ userId: req.user.userId, status: { $in: ['waiting', 'serving'] } });
+    if (!token) return res.status(404).json({ message: 'No active queue' });
+    
+    if (token.status === 'serving') {
+       token.position = 0;
+       token.estimatedWaitTime = 0;
+    } else {
+       const queueKey = `queue:${token.department}`;
+       const elements = await redisClient.lRange(queueKey, 0, -1);
+       const positionIndex = elements.indexOf(token._id.toString());
+       if (positionIndex !== -1) {
+         token.position = positionIndex + 1;
+         token.estimatedWaitTime = token.position * AVG_SERVICE_TIME;
+       }
+    }
+    res.json(token);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get patient queue history
+router.get('/history', auth, async (req, res) => {
+  try {
+    const history = await QueueToken.find({ 
+      userId: req.user.userId, 
+      status: { $in: ['completed', 'cancelled'] } 
+    }).sort({ createdAt: -1 });
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // Track position
 router.get('/status/:tokenId', auth, async (req, res) => {
   try {
@@ -96,6 +133,15 @@ router.post('/serve/:department', auth, async (req, res) => {
     }
 
     const { department } = req.params;
+
+    // Check if there is already a patient being served in this department (limit to 1 at a time)
+    const activeServing = await QueueToken.findOne({ department, status: 'serving' });
+    if (activeServing) {
+      return res.status(400).json({ 
+        message: `A patient is already being served in ${department}. Please complete their session first.` 
+      });
+    }
+
     const queueKey = `queue:${department}`;
     
     // Pop from left (front of queue)
@@ -135,30 +181,6 @@ router.get('/all', auth, async (req, res) => {
   }
 });
 
-// Get my active queue
-router.get('/my-active', auth, async (req, res) => {
-  try {
-    const token = await QueueToken.findOne({ userId: req.user.userId, status: { $in: ['waiting', 'serving'] } });
-    if (!token) return res.status(404).json({ message: 'No active queue' });
-    
-    if (token.status === 'serving') {
-       token.position = 0;
-       token.estimatedWaitTime = 0;
-    } else {
-       const queueKey = `queue:${token.department}`;
-       const elements = await redisClient.lRange(queueKey, 0, -1);
-       const positionIndex = elements.indexOf(token._id.toString());
-       if (positionIndex !== -1) {
-         token.position = positionIndex + 1;
-         token.estimatedWaitTime = token.position * AVG_SERVICE_TIME;
-       }
-    }
-    res.json(token);
-  } catch (err) {
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
 // Admin mark complete
 router.post('/complete/:tokenId', auth, async (req, res) => {
   try {
@@ -172,6 +194,10 @@ router.post('/complete/:tokenId', auth, async (req, res) => {
     await token.save();
     
     req.io.emit('queueUpdate', { department: token.department });
+    // Emit notification and sessionCompleted to the patient
+    req.io.to(token.userId.toString()).emit('notification', { message: 'Your session has been completed!' });
+    req.io.to(token.userId.toString()).emit('sessionCompleted');
+
     res.json({ message: 'Token completed', token });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });

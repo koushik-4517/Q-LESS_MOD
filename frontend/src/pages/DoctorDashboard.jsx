@@ -85,7 +85,7 @@ export default function DoctorDashboard() {
                                 await axios.post(`http://localhost:8000/api/queue/complete/${t._id}`, {}, { headers: { Authorization: `Bearer ${token}` }});
                                 fetchQueues();
                               } catch(e) { alert('Failed to complete session'); }
-                           }} className="px-6 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition">Mark as Completed</button>
+                           }} className="px-6 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition">Proceed</button>
                       </div>
                    ))}
                 </div>
